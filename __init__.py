@@ -2460,8 +2460,5 @@ def _execution_mode(ctx, inputs):
 
 
 def register(p):
-    p.register(ImportSamples)
-    p.register(MergeSamples)
-    p.register(MergeLabels)
     p.register(ExportSamples)
-    p.register(DrawLabels)
+   

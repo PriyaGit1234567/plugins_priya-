@@ -6,8 +6,4 @@ fiftyone:
 url: https://github.com/voxel51/fiftyone-plugins/tree/main/plugins/io
 license: Apache 2.0
 operators:
-  - import_samples
-  - merge_samples
-  - merge_labels
-  - export_samples
-  - draw_labels
+  - export_samples_priya

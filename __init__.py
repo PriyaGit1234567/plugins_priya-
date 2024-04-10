@@ -22,173 +22,6 @@ import fiftyone.operators.types as types
 import fiftyone.types as fot
 
 
-class ImportSamples(foo.Operator):
-    @property
-    def config(self):
-        return foo.OperatorConfig(
-            name="import_samples",
-            label="Import samples",
-            light_icon="/assets/icon-light.svg",
-            dark_icon="/assets/icon-dark.svg",
-            dynamic=True,
-            execute_as_generator=True,
-        )
-
-    def __call__(
-        self,
-        dataset,
-        dataset_type=None,
-        dataset_dir=None,
-        data_path=None,
-        labels_path=None,
-        label_field=None,
-        label_types=None,
-        tags=None,
-        dynamic=False,
-        delegate=False,
-        delegation_target=None,
-        **kwargs,
-    ):
-        """Imports the specified media and/or labels into the given dataset.
-
-        Example usage::
-
-            import os
-
-            import fiftyone as fo
-            import fiftyone.operators as foo
-            import fiftyone.zoo as foz
-
-            quickstart = foz.load_zoo_dataset("quickstart")
-
-            # A directory of images
-            images_dir = os.path.dirname(quickstart.first().filepath)
-
-            # A file of corresponding labels
-            labels_path = "/tmp/labels.json"
-            quickstart.export(
-                dataset_type=fo.types.COCODetectionDataset,
-                labels_path=labels_path,
-                label_field="ground_truth",
-                abs_paths=True,
-            )
-
-            dataset = fo.Dataset()
-            import_samples = foo.get_operator("@voxel51/io/import_samples")
-
-            # Import media
-            import_samples(
-                dataset,
-                data_path=images_dir,
-                tags="quickstart",
-                delegate=True,
-            )
-
-            # Import labels
-            import_samples(
-                dataset,
-                dataset_type=fo.types.COCODetectionDataset,
-                labels_path=labels_path,
-                label_field="ground_truth",
-                label_types="detections",
-                delegate=True,
-            )
-
-        Args:
-            dataset: a :class:`fiftyone.core.dataset.Dataset`
-            dataset_type (None): the :class:`fiftyone.types.Dataset` type of
-                the dataset
-            dataset_dir (None): a directory containing media and labels to
-                import
-            data_path (None): a directory or glob pattern of media to import
-            labels_path (None): a file or directory of labels to import
-            label_field (None): a new or existing field in which to store the
-                imported labels, if applicable
-            label_types (None): an optional label type or iterable of label
-                types to load, when importing labels for dataset types that may
-                contain multiple label types. By default, all labels are loaded
-            tags (None): an optional tag or iterable of tags to attach to each
-                sample when creating new samples
-            dynamic (False): whether to declare dynamic attributes of embedded
-                document fields that are encountered when importing labels
-            delegate (False): whether to delegate execution
-            delegation_target (None): an optional orchestrator on which to
-                schedule the operation, if it is delegated
-            **kwargs: optional keyword arguments to pass to the constructor of
-                the :class:`fiftyone.utils.data.importers.DatasetImporter` for
-                the specified ``dataset_type``
-        """
-        ctx = dict(dataset=dataset)
-        if delegation_target is not None:
-            ctx["delegation_target"] = delegation_target
-
-        params = dict(
-            label_field=label_field,
-            label_types=_to_list(label_types),
-            tags=_to_list(tags),
-            dynamic=dynamic,
-            delegate=delegate,
-            kwargs=kwargs,
-        )
-
-        if dataset_dir is None and data_path is not None:
-            params["import_type"] = "MEDIA_ONLY"
-            try:
-                assert fos.isdir(data_path)
-                params["style"] = "DIRECTORY"
-                params["directory"] = _to_path(data_path)
-            except:
-                params["style"] = "GLOB_PATTERN"
-                params["glob_patt"] = _to_path(data_path)
-
-            data_path = None
-        elif dataset_dir is None and labels_path is not None:
-            params["import_type"] = "LABELS_ONLY"
-        else:
-            params["import_type"] = "MEDIA_AND_LABELS"
-
-        if dataset_type is not None:
-            params["dataset_type"] = _get_dataset_type_label(dataset_type)
-
-        if dataset_dir is not None:
-            params["dataset_dir"] = _to_path(dataset_dir)
-
-        if data_path is not None:
-            params["data_path"] = _to_path(data_path)
-
-        if labels_path is not None:
-            params["labels_path"] = _to_path(labels_path)
-
-        return foo.execute_operator(self.uri, ctx, params=params)
-
-    def resolve_input(self, ctx):
-        inputs = types.Object()
-
-        ready = _import_samples_inputs(ctx, inputs)
-        if ready:
-            _execution_mode(ctx, inputs)
-
-        return types.Property(inputs, view=types.View(label="Import samples"))
-
-    def resolve_delegation(self, ctx):
-        return ctx.params.get("delegate", False)
-
-    def execute(self, ctx):
-        import_type = ctx.params.get("import_type", None)
-
-        if import_type == "MEDIA_ONLY":
-            for update in _import_media_only(ctx):
-                yield update
-        elif import_type == "MEDIA_AND_LABELS":
-            for update in _import_media_and_labels(ctx):
-                yield update
-        elif import_type == "LABELS_ONLY":
-            for update in _import_labels_only(ctx):
-                yield update
-
-        yield ctx.trigger("reload_dataset")
-
-
 def _import_samples_inputs(ctx, inputs):
     import_choices = types.Choices()
     import_choices.add_choice(
@@ -994,68 +827,6 @@ def _glob_files(directory=None, glob_patt=None):
     return fos.get_glob_matches(glob_patt)
 
 
-class MergeSamples(foo.Operator):
-    @property
-    def config(self):
-        return foo.OperatorConfig(
-            name="merge_samples",
-            label="Merge samples",
-            light_icon="/assets/icon-light.svg",
-            dark_icon="/assets/icon-dark.svg",
-            dynamic=True,
-        )
-
-    def resolve_input(self, ctx):
-        inputs = types.Object()
-
-        ready = _merge_samples_inputs(ctx, inputs)
-        if ready:
-            _execution_mode(ctx, inputs)
-
-        return types.Property(inputs, view=types.View(label="Merge samples"))
-
-    def resolve_delegation(self, ctx):
-        return ctx.params.get("delegate", False)
-
-    def execute(self, ctx):
-        src_type = ctx.params.get("src_type", None)
-        src_dataset = ctx.params.get("src_dataset", None)
-
-        dst_type = ctx.params.get("dst_type", None)
-        dst_dataset = ctx.params.get("dst_dataset", None)
-
-        key_field = ctx.params["key_field"]
-        skip_existing = ctx.params["skip_existing"]
-        insert_new = ctx.params["insert_new"]
-        fields = ctx.params.get("fields", None) or None
-        omit_fields = ctx.params.get("omit_fields", None) or None
-        merge_lists = ctx.params["merge_lists"]
-        overwrite = ctx.params["overwrite"]
-        expand_schema = ctx.params["expand_schema"]
-        dynamic = ctx.params["dynamic"]
-        include_info = ctx.params["include_info"]
-        overwrite_info = ctx.params["overwrite_info"]
-
-        src_coll = _get_merge_collection(ctx, src_type, src_dataset)
-        dst_dataset = _get_merge_collection(ctx, dst_type, dst_dataset)
-
-        dst_dataset.merge_samples(
-            src_coll,
-            key_field=key_field,
-            skip_existing=skip_existing,
-            insert_new=insert_new,
-            fields=fields,
-            omit_fields=omit_fields,
-            merge_lists=merge_lists,
-            overwrite=overwrite,
-            expand_schema=expand_schema,
-            dynamic=dynamic,
-            include_info=include_info,
-            overwrite_info=overwrite_info,
-        )
-
-        if dst_dataset is ctx.dataset:
-            ctx.trigger("reload_dataset")
 
 
 def _merge_samples_inputs(ctx, inputs):
@@ -1378,39 +1149,6 @@ def _get_sample_fields(sample_collection, field_types):
     ]
 
 
-class MergeLabels(foo.Operator):
-    @property
-    def config(self):
-        return foo.OperatorConfig(
-            name="merge_labels",
-            label="Merge labels",
-            light_icon="/assets/icon-light.svg",
-            dark_icon="/assets/icon-dark.svg",
-            dynamic=True,
-        )
-
-    def resolve_input(self, ctx):
-        inputs = types.Object()
-
-        ready = _merge_labels_inputs(ctx, inputs)
-        if ready:
-            _execution_mode(ctx, inputs)
-
-        return types.Property(inputs, view=types.View(label="Merge labels"))
-
-    def resolve_delegation(self, ctx):
-        return ctx.params.get("delegate", False)
-
-    def execute(self, ctx):
-        target = ctx.params.get("target", None)
-        in_field = ctx.params["in_field"]
-        out_field = ctx.params["out_field"]
-
-        view = _get_target_view(ctx, target)
-
-        view.merge_labels(in_field, out_field)
-
-        ctx.trigger("reload_dataset")
 
 
 def _merge_labels_inputs(ctx, inputs):
@@ -1518,8 +1256,8 @@ class ExportSamples(foo.Operator):
     @property
     def config(self):
         return foo.OperatorConfig(
-            name="export_samples",
-            label="Export samples",
+            name="export_samples_priya",
+            label="Export samples Priya",
             light_icon="/assets/icon-light.svg",
             dark_icon="/assets/icon-dark.svg",
             dynamic=True,
@@ -1731,32 +1469,67 @@ class ExportSamples(foo.Operator):
 def _export_samples_inputs(ctx, inputs):
     has_view = ctx.view != ctx.dataset.view()
     has_selected = bool(ctx.selected)
-    default_target = None
-    if has_view or has_selected:
-        target_choices = types.RadioGroup()
-        target_choices.add_choice(
-            "DATASET",
-            label="Entire dataset",
-            description="Export the entire dataset",
+    # default_target = None
+    # #target_choices = types.RadioGroup()
+    
+    # if has_view or has_selected:
+    #     target_choices = types.RadioGroup()
+    #     target_choices.add_choice(
+    #         "DATASET",
+    #         label="Entire dataset",
+    #         description="Export the entire dataset",
+    #     )
+
+    #     target_choices.add_choice(
+    #         "VAL_OPS",
+    #         label="VALOps Dataset",
+    #         description="Export the VALOps dataset",
+    #     )
+    #     default_target = "VAL_OPS"
+    #     target_choices.add_choice(
+    #         "ML_OPS",
+    #         label="MLOps Dataset",
+    #         description="Export the MLOps dataset",
+    #     )
+    #     default_target = "ML_OPS"
+    
+
+    #     if has_view:
+    #         target_choices.add_choice(
+    #             "CURRENT_VIEW",
+    #             label="Current view",
+    #             description="Export the current view",
+    #         )
+    #         default_target = "CURRENT_VIEW"
+
+    #     if has_selected:
+    #         target_choices.add_choice(
+    #             "SELECTED_SAMPLES",
+    #             label="Selected samples",
+    #             description="Export only the selected samples",
+    #         )
+    #         default_target = "SELECTED_SAMPLES"
+    target_choices = types.RadioGroup()
+    # target_choices.add_choice(
+    #         "DATASET",
+    #         label="Entire dataset",
+    #         description="Export the entire dataset",
+    #     )
+
+    target_choices.add_choice(
+            "VAL_OPS",
+            label="VALOps Dataset",
+            description="Export the VALOps dataset",
         )
+    default_target = "VAL_OPS"
+    target_choices.add_choice(
+            "ML_OPS",
+            label="MLOps Dataset",
+            description="Export the MLOps dataset",
+        )
+    default_target = "ML_OPS"
 
-        if has_view:
-            target_choices.add_choice(
-                "CURRENT_VIEW",
-                label="Current view",
-                description="Export the current view",
-            )
-            default_target = "CURRENT_VIEW"
-
-        if has_selected:
-            target_choices.add_choice(
-                "SELECTED_SAMPLES",
-                label="Selected samples",
-                description="Export only the selected samples",
-            )
-            default_target = "SELECTED_SAMPLES"
-
-        inputs.enum(
+    inputs.enum(
             "target",
             target_choices.values(),
             default=default_target,
@@ -1766,152 +1539,167 @@ def _export_samples_inputs(ctx, inputs):
     target = ctx.params.get("target", default_target)
     target_view = _get_target_view(ctx, target)
 
-    if target == "SELECTED_SAMPLES":
-        target_str = "selected samples"
-    elif target == "CURRENT_VIEW":
-        target_str = "current view"
+    if has_selected:
+        if target=="ML_OPS":
+            target_str="MLOps"
+            targetMLVAL_str=f"Selected {ctx.view.select(ctx.selected).count()} dataset samples exported for MLOps"
+        if target=="VAL_OPS":
+            target_str="VALOps"
+            targetMLVAL_str=f"Selected {ctx.view.select(ctx.selected).count()} dataset samples exported for VALOps"
     else:
-        target_str = "dataset"
+        if target == "ML_OPS":
+            target_str = "MLOps"
+            targetMLVAL_str=f"All {ctx.dataset.count()} dataset samples exported for MLOps"
+        elif target == "VAL_OPS":
+            target_str = "VALOps"
+            targetMLVAL_str=f"All {ctx.dataset.count()} dataset samples exported for VALOps"
+        else:
+            target_str = "VALOps"
 
-    export_choices = types.Choices()
-    export_choices.add_choice(
-        "FILEPATHS_ONLY",
-        label="Filepaths only",
-        description=f"Export the filepaths of the {target_str}",
-    )
-    export_choices.add_choice(
-        "MEDIA_ONLY",
-        label="Media only",
-        description=f"Export media of the {target_str}",
-    )
-    export_choices.add_choice(
-        "LABELS_ONLY",
-        label="Labels only",
-        description=f"Export labels of the {target_str}",
-    )
-    export_choices.add_choice(
-        "MEDIA_AND_LABELS",
-        label="Media and labels",
-        description=f"Export media and labels of the {target_str}",
-    )
+    # export_choices = types.Choices()
+    # export_choices.add_choice(
+    #     "FILEPATHS_ONLY",
+    #     label="Filepaths only",
+    #     description=f"Export the filepaths of the {target_str}",
+    # )
+    # export_choices.add_choice(
+    #     "MEDIA_ONLY",
+    #     label="Media only",
+    #     description=f"Export media of the {target_str}",
+    # )
+    # export_choices.add_choice(
+    #     "LABELS_ONLY",
+    #     label="Labels only",
+    #     description=f"Export labels of the {target_str}",
+    # )
+    # export_choices.add_choice(
+    #     "MEDIA_AND_LABELS",
+    #     label="Media and labels",
+    #     description=f"Export media and labels of the {target_str}",
+    # )
 
-    inputs.enum(
-        "export_type",
-        export_choices.values(),
-        required=True,
-        label="Export type",
-        description="Choose what to export",
-        view=export_choices,
-    )
+    # inputs.enum(
+    #     "export_type",
+    #     export_choices.values()[0],
+    #     required=True,
+    #     label="Export type",
+    #     description="Choose what to export",
+    #     view=export_choices,
+    # )
 
-    export_type = ctx.params.get("export_type", None)
-    if export_type is None:
-        return False
+    # export_type = ctx.params.get("export_type", None)
+    # if export_type is None:
+    #     return False
 
-    dataset_type = None
-    fields = None
+    #export_type = "FILEPATHS_ONLY"
+    export_type = "LABELS_ONLY"
 
-    if export_type == "FILEPATHS_ONLY":
-        export_type = "LABELS_ONLY"
-        dataset_type = "CSV"
-        fields = ["filepath"]
-    elif export_type in ("LABELS_ONLY", "MEDIA_AND_LABELS"):
-        dataset_types = _get_export_types(
-            target_view, export_type, allow_coercion=True
-        )
-        inputs.enum(
-            "dataset_type",
-            dataset_types,
-            required=True,
-            label="Label format",
-            description="The label format in which to export",
-        )
+    dataset_type = "CSV"
+    fields = ["filepath"]
 
-        dataset_type = ctx.params.get("dataset_type", None)
-        if dataset_type is None:
-            return False
+    # if export_type == "FILEPATHS_ONLY":
+    #     export_type = "LABELS_ONLY"
+    #     dataset_type = "CSV"
+    #     fields = ["filepath"]
+    # elif export_type in ("LABELS_ONLY", "MEDIA_AND_LABELS"):
+    #     dataset_types = _get_export_types(
+    #         target_view, export_type, allow_coercion=True
+    #     )
+    #     inputs.enum(
+    #         "dataset_type",
+    #         dataset_types,
+    #         required=True,
+    #         label="Label format",
+    #         description="The label format in which to export",
+    #     )
 
-        docs_link = _get_docs_link(dataset_type, type="export")
-        inputs.view(
-            "docs", types.Notice(label=f"Exporter documentation: {docs_link}")
-        )
+    #     dataset_type = ctx.params.get("dataset_type", None)
+    #     if dataset_type is None:
+    #         return False
 
-        if dataset_type == "CSV":
-            field_choices = types.Dropdown(multiple=True)
-            for field in _get_csv_fields(target_view):
-                field_choices.add_choice(field, label=field)
+        # docs_link = _get_docs_link(dataset_type, type="export")
+        # inputs.view(
+        #     "docs", types.Notice(label=f"Exporter documentation: {docs_link}")
+        # )
 
-            inputs.list(
-                "csv_fields",
-                types.String(),
-                required=True,
-                label="Fields",
-                description="Field(s) to include as columns of the CSV",
-                view=field_choices,
-            )
+        # if dataset_type == "CSV":
+        #     field_choices = types.Dropdown(multiple=True)
+        #     for field in _get_csv_fields(target_view):
+        #         field_choices.add_choice(field, label=field)
 
-            fields = ctx.params.get("csv_fields", None)
-            if not fields:
-                return False
-        elif _requires_label_field(dataset_type):
-            multiple = _can_export_multiple_fields(dataset_type)
-            label_field_choices = types.Dropdown(multiple=multiple)
-            for field in _get_label_fields(
-                target_view, dataset_type, allow_coercion=True
-            ):
-                label_field_choices.add_choice(field, label=field)
+        #     inputs.list(
+        #         "csv_fields",
+        #         types.String(),
+        #         required=True,
+        #         label="Fields",
+        #         description="Field(s) to include as columns of the CSV",
+        #         view=field_choices,
+        #     )
 
-            if multiple:
-                inputs.list(
-                    "label_fields",
-                    types.String(),
-                    required=True,
-                    label="Label fields",
-                    description="The field(s) containing the labels to export",
-                    view=label_field_choices,
-                )
+        #     fields = ctx.params.get("csv_fields", None)
+        #     if not fields:
+        #         return False
+        # elif _requires_label_field(dataset_type):
+        #     multiple = _can_export_multiple_fields(dataset_type)
+        #     label_field_choices = types.Dropdown(multiple=multiple)
+        #     for field in _get_label_fields(
+        #         target_view, dataset_type, allow_coercion=True
+        #     ):
+        #         label_field_choices.add_choice(field, label=field)
 
-                fields = ctx.params.get("label_fields", None)
-            else:
-                inputs.enum(
-                    "label_field",
-                    label_field_choices.values(),
-                    required=True,
-                    label="Label field",
-                    description="The field containing the labels to export",
-                    view=label_field_choices,
-                )
+        #     if multiple:
+        #         inputs.list(
+        #             "label_fields",
+        #             types.String(),
+        #             required=True,
+        #             label="Label fields",
+        #             description="The field(s) containing the labels to export",
+        #             view=label_field_choices,
+        #         )
 
-                fields = ctx.params.get("label_field", None)
+        #         fields = ctx.params.get("label_fields", None)
+        #     else:
+        #         inputs.enum(
+        #             "label_field",
+        #             label_field_choices.values(),
+        #             required=True,
+        #             label="Label field",
+        #             description="The field containing the labels to export",
+        #             view=label_field_choices,
+        #         )
 
-            if fields is None:
-                return False
+        #         fields = ctx.params.get("label_field", None)
 
-    if _can_export_abs_paths(dataset_type):
-        inputs.bool(
-            "abs_paths",
-            default=False,
-            label="Absolute paths",
-            description=(
-                "Store absolute paths to the media in the exported labels?"
-            ),
-            view=types.CheckboxView(),
-        )
+        #     if fields is None:
+        #         return False
 
-    labels_path_type = _get_labels_path_type(dataset_type)
+    # if _can_export_abs_paths(dataset_type):
+    #     inputs.bool(
+    #         "abs_paths",
+    #         default=False,
+    #         label="Absolute paths",
+    #         description=(
+    #             "Store absolute paths to the media in the exported labels?"
+    #         ),
+    #         view=types.CheckboxView(),
+    #     )
+
+    #labels_path_type = _get_labels_path_type(dataset_type)
+    labels_path_type = "file"
 
     if labels_path_type == "file":
         ext = _get_labels_path_ext(dataset_type)
-        file_explorer = types.FileExplorerView(button_label="Choose a file...")
-        prop = inputs.file(
-            "labels_path",
-            required=True,
-            label="Labels path",
-            description=f"Choose a {ext} path to write the labels",
-            view=file_explorer,
-        )
+        # file_explorer = types.FileExplorerView(button_label="Choose a file...")
+        # prop = inputs.file(
+        #     "labels_path",
+        #     required=True,
+        #     label="Labels path",
+        #     description=f"Choose a {ext} path to write the labels",
+        #     view=file_explorer,
+        # )
 
-        labels_path = _parse_path(ctx, "labels_path")
+        # labels_path = _parse_path(ctx, "labels_path")
+        labels_path = "/data/"+target_str+"_"+str(time.time())+".csv"
         if labels_path is None:
             return False
 
@@ -1996,8 +1784,12 @@ def _export_samples_inputs(ctx, inputs):
 
     size_bytes = _estimate_export_size(target_view, export_type, fields)
     size_str = etau.to_human_bytes_str(size_bytes)
-    label = f"Estimated export size: {size_str}"
-    inputs.view("estimate", types.Notice(label=label))
+    #label = f"Estimated export size: {size_str}"
+    label_fpath = f"Data Export File Path for {target_str}: {labels_path}"
+    
+    #inputs.view("estimate", types.Notice(label=label))
+    inputs.view("filepath",types.Notice(label=label_fpath))
+    inputs.view("samples",types.Notice(label=targetMLVAL_str))
 
     return True
 
@@ -2005,16 +1797,35 @@ def _export_samples_inputs(ctx, inputs):
 def _export_samples(ctx):
     target = ctx.params.get("target", None)
     export_dir = _parse_path(ctx, "export_dir")
-    labels_path = _parse_path(ctx, "labels_path")
-    export_type = ctx.params["export_type"]
+
+    # labels_path = _parse_path(ctx, "labels_path")
+    # export_type = ctx.params["export_type"]
+    # export_media = ctx.params.get("export_media", None)
+    # dataset_type = ctx.params.get("dataset_type", None)
+    # label_field = ctx.params.get("label_field", None)
+    # label_fields = ctx.params.get("label_fields", None)
+    # csv_fields = ctx.params.get("csv_fields", None)
+    # abs_paths = ctx.params.get("abs_paths", None)
+    # manual = ctx.params.get("manual", False)
+    # kwargs = ctx.params.get("kwargs", {})
+
+    if target == "ML_OPS":
+        target_str="MLOps"
+    elif target == "VAL_OPS":
+        target_str  = "VALOps"
+    labels_path = "/data/"+target_str+"_"+str(time.time())+".csv"
+    # export_type = ctx.params["export_type"]
+    export_type = "FILEPATHS_ONLY"
     export_media = ctx.params.get("export_media", None)
     dataset_type = ctx.params.get("dataset_type", None)
     label_field = ctx.params.get("label_field", None)
     label_fields = ctx.params.get("label_fields", None)
     csv_fields = ctx.params.get("csv_fields", None)
-    abs_paths = ctx.params.get("abs_paths", None)
+    # abs_paths = ctx.params.get("abs_paths", None)
+    abs_paths = True
     manual = ctx.params.get("manual", False)
     kwargs = ctx.params.get("kwargs", {})
+
 
     if _can_export_multiple_fields(dataset_type):
         label_field = label_fields
@@ -2496,42 +2307,6 @@ _DATASET_TYPES = [
 ]
 
 
-class DrawLabels(foo.Operator):
-    @property
-    def config(self):
-        return foo.OperatorConfig(
-            name="draw_labels",
-            label="Draw labels",
-            light_icon="/assets/icon-light.svg",
-            dark_icon="/assets/icon-dark.svg",
-            dynamic=True,
-        )
-
-    def resolve_input(self, ctx):
-        inputs = types.Object()
-
-        ready = _draw_labels_inputs(ctx, inputs)
-        if ready:
-            _execution_mode(ctx, inputs)
-
-        return types.Property(inputs, view=types.View(label="Draw labels"))
-
-    def resolve_delegation(self, ctx):
-        return ctx.params.get("delegate", False)
-
-    def execute(self, ctx):
-        target = ctx.params.get("target", None)
-        output_dir = _parse_path(ctx, "output_dir")
-        label_fields = ctx.params.get("label_fields", None)
-        overwrite = ctx.params.get("overwrite", False)
-
-        target_view = _get_target_view(ctx, target)
-
-        target_view.draw_labels(
-            output_dir,
-            label_fields=label_fields,
-            overwrite=overwrite,
-        )
 
 
 def _draw_labels_inputs(ctx, inputs):
